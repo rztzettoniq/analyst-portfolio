@@ -93,8 +93,8 @@ paths:
       tags: [orders]
       summary: Сменить статус заказа
       description: |
-        Допустимые переходы: new→priced, priced→paid, paid→assigned, assigned→in_progress,
-        in_progress→done; любой статус до in_progress → cancelled. Иные переходы → 409.
+        Допустимые переходы: new -> priced, priced -> paid, paid -> assigned, assigned -> in_progress,
+        in_progress -> done; любой статус до in_progress -> cancelled. Иные переходы → 409.
       operationId: changeOrderStatus
       security: [{ bearerAuth: [] }]
       parameters:
@@ -204,7 +204,7 @@ paths:
   /webhooks/order-status:
     post:
       tags: [orders]
-      summary: Webhook CRM → бот при смене статуса
+      summary: Webhook от CRM к боту при смене статуса
       operationId: orderStatusWebhook
       description: CRM вызывает этот адрес на стороне бот-сервиса. Подпись в заголовке X-Signature (HMAC-SHA256 тела запроса).
       requestBody:
