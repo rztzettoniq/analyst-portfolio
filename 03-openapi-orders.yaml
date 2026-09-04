@@ -1,0 +1,338 @@
+openapi: 3.0.3
+info:
+  title: Orders API
+  version: 1.2.0
+  description: |
+    Контракт между CRM (сервер) и клиентами: Telegram-ботом приёма заказов, LLM-ассистентом и сайтом.
+    Единый источник данных о заказе. Аутентификация — Bearer-токен сервиса.
+servers:
+  - url: https://crm.example.com/api/v1
+
+tags:
+  - name: orders
+  - name: executors
+  - name: pricing
+
+paths:
+  /orders:
+    post:
+      tags: [orders]
+      summary: Создать заказ
+      operationId: createOrder
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderCreate' }
+      responses:
+        '201':
+          description: Заказ создан
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    get:
+      tags: [orders]
+      summary: Список заказов с фильтрами
+      operationId: listOrders
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/OrderStatus' } }
+        - { name: executor_id, in: query, schema: { type: integer } }
+        - { name: created_from, in: query, schema: { type: string, format: date-time } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200':
+          description: Страница заказов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Order' } }
+                  total: { type: integer }
+
+  /orders/{order_id}:
+    parameters:
+      - { name: order_id, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [orders]
+      summary: Получить заказ
+      operationId: getOrder
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Заказ
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [orders]
+      summary: Обновить поля заказа (частично)
+      operationId: updateOrder
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderUpdate' }
+      responses:
+        '200':
+          description: Обновлённый заказ
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /orders/{order_id}/status:
+    post:
+      tags: [orders]
+      summary: Сменить статус заказа
+      description: |
+        Допустимые переходы: new→priced, priced→paid, paid→assigned, assigned→in_progress,
+        in_progress→done; любой статус до in_progress → cancelled. Иные переходы → 409.
+      operationId: changeOrderStatus
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: order_id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: '#/components/schemas/OrderStatus' }
+                comment: { type: string, maxLength: 500 }
+      responses:
+        '200':
+          description: Статус изменён
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '409':
+          description: Недопустимый переход статуса
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /orders/{order_id}/assign:
+    post:
+      tags: [orders]
+      summary: Назначить исполнителя
+      operationId: assignExecutor
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: order_id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [executor_id]
+              properties:
+                executor_id: { type: integer }
+                response_timeout_min: { type: integer, default: 15, description: Через сколько минут без ответа заказ вернётся администратору }
+      responses:
+        '202':
+          description: Уведомление исполнителю отправлено, ожидается ответ
+        '409':
+          description: Заказ не в статусе paid или исполнитель недоступен
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /orders/{order_id}/quote:
+    post:
+      tags: [pricing]
+      summary: Рассчитать предварительную стоимость
+      operationId: quoteOrder
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: order_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Диапазон стоимости по прайс-матрице
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Quote' }
+        '422':
+          description: Комбинация параметров отсутствует в матрице — требуется ручной расчёт
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /executors:
+    get:
+      tags: [executors]
+      summary: Список исполнителей с фильтром по предмету и загрузке
+      operationId: listExecutors
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: subject, in: query, schema: { type: string } }
+        - { name: max_active_orders, in: query, schema: { type: integer } }
+      responses:
+        '200':
+          description: Исполнители
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Executor' }
+
+  /pricing:
+    get:
+      tags: [pricing]
+      summary: Прайс-матрица (кэшируется клиентами на 1 час)
+      operationId: getPricing
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Матрица
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PriceRule' }
+
+  /webhooks/order-status:
+    post:
+      tags: [orders]
+      summary: Webhook CRM → бот при смене статуса
+      operationId: orderStatusWebhook
+      description: CRM вызывает этот адрес на стороне бот-сервиса. Подпись в заголовке X-Signature (HMAC-SHA256 тела запроса).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, status, changed_at]
+              properties:
+                order_id: { type: integer }
+                status: { $ref: '#/components/schemas/OrderStatus' }
+                changed_at: { type: string, format: date-time }
+      responses:
+        '200': { description: Принято }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  responses:
+    ValidationError:
+      description: Ошибка валидации
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Неверный или отсутствующий токен
+    NotFound:
+      description: Не найдено
+
+  schemas:
+    OrderStatus:
+      type: string
+      enum: [new, priced, paid, assigned, in_progress, done, cancelled]
+
+    WorkType:
+      type: string
+      enum: [essay, coursework, report, test, presentation, other]
+
+    OrderCreate:
+      type: object
+      required: [client, work_type, subject, deadline, volume, source]
+      properties:
+        client: { $ref: '#/components/schemas/ClientRef' }
+        work_type: { $ref: '#/components/schemas/WorkType' }
+        subject: { type: string, maxLength: 200, example: Экономика предприятия }
+        deadline: { type: string, format: date, description: Не раньше завтрашнего дня }
+        volume: { type: integer, minimum: 1, maximum: 500, description: Страниц или задач }
+        requirements: { type: string, maxLength: 4000 }
+        files: { type: array, maxItems: 10, items: { $ref: '#/components/schemas/FileRef' } }
+        source: { type: string, enum: [telegram_bot, llm_assistant, website] }
+        needs_manual_pricing: { type: boolean, default: false }
+
+    OrderUpdate:
+      type: object
+      properties:
+        subject: { type: string, maxLength: 200 }
+        deadline: { type: string, format: date }
+        volume: { type: integer, minimum: 1, maximum: 500 }
+        requirements: { type: string, maxLength: 4000 }
+        final_price: { type: number, minimum: 0 }
+
+    Order:
+      allOf:
+        - $ref: '#/components/schemas/OrderCreate'
+        - type: object
+          required: [id, status, created_at]
+          properties:
+            id: { type: integer }
+            status: { $ref: '#/components/schemas/OrderStatus' }
+            quote: { $ref: '#/components/schemas/Quote' }
+            final_price: { type: number }
+            executor_id: { type: integer, nullable: true }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+
+    ClientRef:
+      type: object
+      required: [channel, external_id]
+      properties:
+        channel: { type: string, enum: [telegram, website] }
+        external_id: { type: string, description: telegram user id или id пользователя сайта }
+        display_name: { type: string, maxLength: 100 }
+
+    FileRef:
+      type: object
+      required: [name, url]
+      properties:
+        name: { type: string }
+        url: { type: string, format: uri }
+        size_bytes: { type: integer, maximum: 20971520 }
+
+    Quote:
+      type: object
+      required: [min_price, max_price, currency]
+      properties:
+        min_price: { type: number, example: 2500 }
+        max_price: { type: number, example: 3500 }
+        currency: { type: string, example: RUB }
+        rule_id: { type: integer }
+
+    PriceRule:
+      type: object
+      required: [id, work_type, urgency_days_max, price_per_unit]
+      properties:
+        id: { type: integer }
+        work_type: { $ref: '#/components/schemas/WorkType' }
+        urgency_days_max: { type: integer, description: Правило действует, если до срока ≤ N дней }
+        price_per_unit: { type: number }
+        min_total: { type: number }
+
+    Executor:
+      type: object
+      required: [id, name, subjects, active_orders]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        subjects: { type: array, items: { type: string } }
+        active_orders: { type: integer }
+        rating: { type: number, minimum: 0, maximum: 5 }
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, example: INVALID_STATUS_TRANSITION }
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
