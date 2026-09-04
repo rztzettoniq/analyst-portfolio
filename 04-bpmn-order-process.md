@@ -35,9 +35,9 @@ flowchart LR
         B --> C[Подтверждает сводку]
     end
     subgraph botcrm["Бот / CRM"]
-        C --> D[POST /orders → статус new]
+        C --> D[POST /orders, статус new]
         D --> E{Есть правило в прайс-матрице?}
-        E -- да --> F[Показывает диапазон цены → priced]
+        E -- да --> F[Показывает диапазон цены, статус priced]
         E -- нет --> G[Флаг needs_manual_pricing]
         F --> H[Уведомление администратору]
         G --> H
@@ -51,7 +51,7 @@ flowchart LR
     subgraph Исполнитель
         K --> M[Получает уведомление с кнопками]
         M --> N{Принял?}
-        N -- да --> O([assigned → in_progress])
+        N -- да --> O([assigned, затем in_progress])
         N -- отклонил или таймаут 15 мин --> K
     end
 ```
